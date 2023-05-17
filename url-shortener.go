@@ -17,6 +17,7 @@ import (
 		2. internal hashmap that holds hashed as a key and URLs as a value + ttl - √
 		3. pick up proper hashing function - √ (md5)
 		4. think about the unit tests, do we need them - ?
+		5. docs
 */
 type hashedUrl string
 type entry struct {
@@ -71,14 +72,30 @@ func redirectHandler(c *gin.Context) {
 	c.Status(http.StatusBadRequest)
 }
 
+func ttlCleanup(c *gin.Context) {
+	updatedState := make(state)
+	outdatedEntriesCount := 0
+	now := time.Now()
+	for k, v := range appState {
+		if now.Sub(v.ttl).Hours() < (24 * 5) {
+			updatedState[k] = v
+		} else {
+			outdatedEntriesCount++
+		}
+	}
+
+	appState = updatedState
+
+	c.IndentedJSON(http.StatusOK, outdatedEntriesCount)
+}
+
 func main() {
 	log.SetPrefix("[genius-url-shortener-app]")
 	router := gin.Default()
 
 	router.GET("/:hash", redirectHandler)
+	router.GET("/internal/ttl", ttlCleanup)
 	router.POST("/url", hashingHandler)
-
-	router.POST("/internal/duplicates", nil)
 
 	err := router.Run("localhost:8123")
 
