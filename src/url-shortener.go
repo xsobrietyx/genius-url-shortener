@@ -50,14 +50,6 @@ type hashRequest struct {
 	Url string `json:"url" binding:"required"`
 }
 
-func validateUrl(u string) error {
-	e := errors.New("error during the url validation. Invalid url")
-	if _, err := url.ParseRequestURI(u); err == nil {
-		e = nil
-	}
-	return e
-}
-
 // hashingHandler performs operations for url shortening and internal state persistence. Returns 200 or 400 otherwise
 func hashingHandler(c *gin.Context) {
 	var request hashRequest
@@ -66,6 +58,15 @@ func hashingHandler(c *gin.Context) {
 		log.Printf("Error during the hashingHandler invocation, JSON binding: %s\n", err.Error())
 		c.Status(http.StatusBadRequest)
 		return
+	}
+
+	// url validation function
+	validateUrl := func(u string) error {
+		e := errors.New("error during the url validation. Invalid url")
+		if _, err := url.ParseRequestURI(u); err == nil {
+			e = nil
+		}
+		return e
 	}
 
 	err = validateUrl(request.Url)
@@ -77,25 +78,30 @@ func hashingHandler(c *gin.Context) {
 
 	hash := md5.New()
 	_, err = io.WriteString(hash, request.Url)
-	hashed := hashedUrl(hex.EncodeToString(hash.Sum(nil)))
+	hashed := hex.EncodeToString(hash.Sum(nil))
+	shortened := ""
+	for i, char := range hashed {
+		if i <= 5 {
+			shortened += string(char)
+		}
+	}
 	if err == nil {
 		appState.mu.Lock()
 		defer appState.mu.Unlock()
-		appState.data[hashed] = entry{
+		appState.data[hashedUrl(shortened)] = entry{
 			value: request.Url,
 			ttl:   time.Now(),
 		}
 	} else {
 		log.Printf("Error during the hashingHandler invocation, writing to the hash: %s\n", err.Error())
 	}
-	shortened := ""
-	for i, char := range string(hashed) {
-		if i <= 5 {
-			shortened += string(char)
-		}
+
+	jsonData := map[string]interface{}{
+		//TODO: port could be parametrized, potential feature
+		"shortenedUrl": "http://localhost:8123/" + shortened,
 	}
-	//TODO: port could be parametrized, potential feature
-	c.IndentedJSON(http.StatusOK, "http://localhost:8123/"+shortened)
+
+	c.JSON(http.StatusOK, jsonData)
 }
 
 // redirectHandler fetches full url from internal state and performs redirect. Returns 308 and redirect if ok and 400 otherwise
@@ -119,7 +125,7 @@ func ttlCleanupHandler(c *gin.Context) {
 	now := time.Now()
 	appState.mu.RLock()
 	for k, v := range appState.data {
-		// TODO: ttl limit could be parametrized, potential feature
+		//TODO: ttl limit could be parametrized, potential feature
 		if now.Sub(v.ttl).Seconds() < 15 { // 15 seconds is used for demo purposes
 			updatedState[k] = v
 		} else {
@@ -133,7 +139,11 @@ func ttlCleanupHandler(c *gin.Context) {
 		mu:   sync.RWMutex{},
 	}
 
-	c.IndentedJSON(http.StatusOK, outdatedEntriesCount)
+	jsonData := map[string]interface{}{
+		"outdatedEntriesCount": outdatedEntriesCount,
+	}
+
+	c.JSON(http.StatusOK, jsonData)
 }
 
 func main() {
