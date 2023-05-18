@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,11 +31,19 @@ type entry struct {
 	value string
 }
 
-// state alias for hashmap for internal state persistence. It's a key-value pair (shortUrl -> full url)
-type applicationState map[hashedUrl]entry
+// applicationState holds the internal app state and sync.RWMutex for proper state synchronization
+type applicationState struct {
+	data map[hashedUrl]entry
+	mu   sync.RWMutex
+}
 
 // appState is not persistent in DB for sake of simplicity
-var appState = make(applicationState)
+var appState = applicationState{
+	data: make(map[hashedUrl]entry),
+	mu:   sync.RWMutex{},
+}
+
+//var appState = make(applicationState)
 
 // hashRequest struct for request with full url that should be shortened
 type hashRequest struct {
@@ -54,7 +63,9 @@ func hashingHandler(c *gin.Context) {
 	_, err = io.WriteString(hash, request.Url)
 	hashed := hashedUrl(hex.EncodeToString(hash.Sum(nil)))
 	if err == nil {
-		appState[hashed] = entry{
+		appState.mu.Lock()
+		defer appState.mu.Unlock()
+		appState.data[hashed] = entry{
 			value: request.Url,
 			ttl:   time.Now(),
 		}
@@ -67,13 +78,16 @@ func hashingHandler(c *gin.Context) {
 			shortened += string(char)
 		}
 	}
+	//TODO: port could be parametrized, potential feature
 	c.IndentedJSON(http.StatusOK, "http://localhost:8123/"+shortened)
 }
 
 // redirectHandler fetches full url from internal state and performs redirect. Returns 308 and redirect if ok and 400 otherwise
 func redirectHandler(c *gin.Context) {
 	key := c.Param("hash")
-	for k, v := range appState {
+	appState.mu.RLock()
+	defer appState.mu.RUnlock()
+	for k, v := range appState.data {
 		if strings.HasPrefix(string(k), key) {
 			c.Redirect(http.StatusPermanentRedirect, v.value)
 			return
@@ -84,19 +98,24 @@ func redirectHandler(c *gin.Context) {
 
 // ttlCleanupHandler removes stale data from internal state
 func ttlCleanupHandler(c *gin.Context) {
-	updatedState := make(applicationState)
+	updatedState := make(map[hashedUrl]entry)
 	outdatedEntriesCount := 0
 	now := time.Now()
-	for k, v := range appState {
+	appState.mu.RLock()
+	for k, v := range appState.data {
 		// TODO: ttl limit could be parametrized, potential feature
-		if now.Sub(v.ttl).Seconds() < (24 * 5) {
+		if now.Sub(v.ttl).Seconds() < 15 {
 			updatedState[k] = v
 		} else {
 			outdatedEntriesCount++
 		}
 	}
+	appState.mu.RUnlock()
 
-	appState = updatedState
+	appState = applicationState{
+		data: updatedState,
+		mu:   sync.RWMutex{},
+	}
 
 	c.IndentedJSON(http.StatusOK, outdatedEntriesCount)
 }
@@ -105,10 +124,11 @@ func main() {
 	log.SetPrefix("[genius-url-shortener-app]")
 	router := gin.Default()
 
-	router.GET("/:hash", redirectHandler)
-	router.GET("/internal/ttl", ttlCleanupHandler)
-	router.POST("/url", hashingHandler)
+	go router.GET("/:hash", redirectHandler)
+	go router.GET("/internal/ttl", ttlCleanupHandler)
+	go router.POST("/url", hashingHandler)
 
+	//TODO: application port could be parametrized, potential feature
 	err := router.Run("localhost:8123")
 
 	if err != nil {
