@@ -3,10 +3,12 @@ package main
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -43,11 +45,17 @@ var appState = applicationState{
 	mu:   sync.RWMutex{},
 }
 
-//var appState = make(applicationState)
-
 // hashRequest struct for request with full url that should be shortened
 type hashRequest struct {
 	Url string `json:"url" binding:"required"`
+}
+
+func validateUrl(u string) error {
+	e := errors.New("error during the url validation. Invalid url")
+	if _, err := url.ParseRequestURI(u); err == nil {
+		e = nil
+	}
+	return e
 }
 
 // hashingHandler performs operations for url shortening and internal state persistence. Returns 200 or 400 otherwise
@@ -55,10 +63,18 @@ func hashingHandler(c *gin.Context) {
 	var request hashRequest
 	err := c.BindJSON(&request)
 	if err != nil {
-		log.Printf("Error json binding during hashRequest went wrong: %s\n", err.Error())
+		log.Printf("Error during the hashingHandler invocation, JSON binding: %s\n", err.Error())
 		c.Status(http.StatusBadRequest)
 		return
 	}
+
+	err = validateUrl(request.Url)
+	if err != nil {
+		log.Printf("Error during the hashingHandler invocation: %s\n", err.Error())
+		c.Status(http.StatusBadRequest)
+		return
+	}
+
 	hash := md5.New()
 	_, err = io.WriteString(hash, request.Url)
 	hashed := hashedUrl(hex.EncodeToString(hash.Sum(nil)))
@@ -70,7 +86,7 @@ func hashingHandler(c *gin.Context) {
 			ttl:   time.Now(),
 		}
 	} else {
-		log.Printf("Error during the hashing: %s\n", err.Error())
+		log.Printf("Error during the hashingHandler invocation, writing to the hash: %s\n", err.Error())
 	}
 	shortened := ""
 	for i, char := range string(hashed) {
@@ -104,7 +120,7 @@ func ttlCleanupHandler(c *gin.Context) {
 	appState.mu.RLock()
 	for k, v := range appState.data {
 		// TODO: ttl limit could be parametrized, potential feature
-		if now.Sub(v.ttl).Seconds() < 15 {
+		if now.Sub(v.ttl).Seconds() < 15 { // 15 seconds is used for demo purposes
 			updatedState[k] = v
 		} else {
 			outdatedEntriesCount++
@@ -132,6 +148,6 @@ func main() {
 	err := router.Run("localhost:8123")
 
 	if err != nil {
-		log.Fatalf("Error during the server start: %s\n", err.Error())
+		log.Fatalf("Error during the main method invocation, server start: %s\n", err.Error())
 	}
 }
