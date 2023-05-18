@@ -9,20 +9,11 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
 )
-
-/*
-	TODO:
-		1. REST server with 3 handlers (first is for hashing the string input, second for de-hashing it, third for cleanup purposes) - ?
-		2. internal hashmap that holds hashed as a key and URLs as a value + ttl - √
-		3. pick up proper hashing function - √ (md5)
-		4. think about the unit tests, do we need them - ?
-		5. docs - √
-		6. md file
-*/
 
 // hashedUrl type alias for holding a hashed url string
 type hashedUrl string
@@ -50,34 +41,15 @@ type hashRequest struct {
 	Url string `json:"url" binding:"required"`
 }
 
-// hashingHandler performs operations for url shortening and internal state persistence. Returns 200 or 400 otherwise
+/*
+	hashingHandler performs operations for url shortening and internal state persistence.
+	Returns 200 or 400 from url validation middleware
+*/
 func hashingHandler(c *gin.Context) {
-	var request hashRequest
-	err := c.BindJSON(&request)
-	if err != nil {
-		log.Printf("Error during the hashingHandler invocation, JSON binding: %s\n", err.Error())
-		c.Status(http.StatusBadRequest)
-		return
-	}
-
-	// url validation function
-	validateUrl := func(u string) error {
-		e := errors.New("error during the url validation. Invalid url")
-		if _, err := url.ParseRequestURI(u); err == nil {
-			e = nil
-		}
-		return e
-	}
-
-	err = validateUrl(request.Url)
-	if err != nil {
-		log.Printf("Error during the hashingHandler invocation: %s\n", err.Error())
-		c.Status(http.StatusBadRequest)
-		return
-	}
+	urlForHash := c.MustGet("url").(string)
 
 	hash := md5.New()
-	_, err = io.WriteString(hash, request.Url)
+	_, err := io.WriteString(hash, urlForHash)
 	hashed := hex.EncodeToString(hash.Sum(nil))
 	shortened := ""
 	for i, char := range hashed {
@@ -89,7 +61,7 @@ func hashingHandler(c *gin.Context) {
 		appState.mu.Lock()
 		defer appState.mu.Unlock()
 		appState.data[hashedUrl(shortened)] = entry{
-			value: request.Url,
+			value: urlForHash,
 			ttl:   time.Now(),
 		}
 	} else {
@@ -146,16 +118,72 @@ func ttlCleanupHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, jsonData)
 }
 
+// urlValidator is a middleware function for request data validation purposes
+func urlValidator() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Checking do we need to apply the validation function
+		if c.Request.URL.Path == "/url" {
+			var request hashRequest
+			err := c.BindJSON(&request)
+			if err != nil {
+				log.Printf("Error during the hashingHandler invocation, JSON binding: %s\n", err.Error())
+				c.Status(http.StatusBadRequest)
+				c.Abort()
+			}
+
+			// url validation function
+			validateUrl := func(u string) error {
+				e := errors.New("error during the url validation. Invalid url")
+				if _, err := url.ParseRequestURI(u); err == nil {
+					e = nil
+				}
+				return e
+			}
+
+			// Apply url validation function
+			err = validateUrl(request.Url)
+			if err != nil {
+				log.Printf("Error during the hashingHandler invocation: %s\n", err.Error())
+				c.Status(http.StatusBadRequest)
+				c.Abort()
+			}
+
+			// Url is valid, we can set it into the context
+			c.Set("url", request.Url)
+
+			// Url is valid, we can proceed to the handler
+			c.Next()
+		}
+	}
+}
+
+// RouterSetup sets up router, used for testing purposes as well
+func RouterSetup() *gin.Engine {
+	f, err := os.Create("./shortener.log")
+	if err != nil {
+		log.Println(err.Error())
+	}
+	gin.DefaultWriter = io.MultiWriter(f, os.Stdout)
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.Default()
+	_ = r.SetTrustedProxies(nil)
+	r.Use(urlValidator())
+
+	r.GET("/:hash", redirectHandler)
+	r.GET("/internal/ttl", ttlCleanupHandler)
+	r.POST("/url", hashingHandler)
+
+	return r
+}
+
+// main - application entrypoint
 func main() {
 	log.SetPrefix("[genius-url-shortener-app]")
-	router := gin.Default()
 
-	go router.GET("/:hash", redirectHandler)
-	go router.GET("/internal/ttl", ttlCleanupHandler)
-	go router.POST("/url", hashingHandler)
+	router := RouterSetup()
 
 	//TODO: application port could be parametrized, potential feature
-	err := router.Run("localhost:8123")
+	err := router.Run(":8123")
 
 	if err != nil {
 		log.Fatalf("Error during the main method invocation, server start: %s\n", err.Error())
