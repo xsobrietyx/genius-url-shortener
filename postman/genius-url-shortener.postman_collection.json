@@ -1,0 +1,92 @@
+{
+	"info": {
+		"_postman_id": "da4767f1-098b-4428-a94a-22a198a297b9",
+		"name": "genius-url-shortener",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "string-to-hash",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"url\": \"https://www.google.ca\"\n}"
+				},
+				"url": {
+					"raw": "http://localhost:8123/url",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8123",
+					"path": [
+						"url"
+					],
+					"query": [
+						{
+							"key": "",
+							"value": null,
+							"disabled": true
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "hash-to-redirect",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "http://localhost:8123/fe9970",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8123",
+					"path": [
+						"fe9970"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "internal-ttl-trigger",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "http://localhost:8123/internal/ttl",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8123",
+					"path": [
+						"internal",
+						"ttl"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

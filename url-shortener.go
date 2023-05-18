@@ -17,22 +17,31 @@ import (
 		2. internal hashmap that holds hashed as a key and URLs as a value + ttl - √
 		3. pick up proper hashing function - √ (md5)
 		4. think about the unit tests, do we need them - ?
-		5. docs
+		5. docs - √
+		6. md file
 */
+
+// hashedUrl type alias for holding a hashed url string
 type hashedUrl string
+
+// entry struct for internal state. ttl - the time our url should be "persisted internally". value - full url
 type entry struct {
 	ttl   time.Time
 	value string
 }
-type state map[hashedUrl]entry
 
-// appState is not persistent for sake of simplicity
-var appState = make(state)
+// state alias for hashmap for internal state persistence. It's a key-value pair (shortUrl -> full url)
+type applicationState map[hashedUrl]entry
 
+// appState is not persistent in DB for sake of simplicity
+var appState = make(applicationState)
+
+// hashRequest struct for request with full url that should be shortened
 type hashRequest struct {
 	Url string `json:"url" binding:"required"`
 }
 
+// hashingHandler performs operations for url shortening and internal state persistence. Returns 200 or 400 otherwise
 func hashingHandler(c *gin.Context) {
 	var request hashRequest
 	err := c.BindJSON(&request)
@@ -61,6 +70,7 @@ func hashingHandler(c *gin.Context) {
 	c.IndentedJSON(http.StatusOK, "http://localhost:8123/"+shortened)
 }
 
+// redirectHandler fetches full url from internal state and performs redirect. Returns 308 and redirect if ok and 400 otherwise
 func redirectHandler(c *gin.Context) {
 	key := c.Param("hash")
 	for k, v := range appState {
@@ -72,12 +82,14 @@ func redirectHandler(c *gin.Context) {
 	c.Status(http.StatusBadRequest)
 }
 
-func ttlCleanup(c *gin.Context) {
-	updatedState := make(state)
+// ttlCleanupHandler removes stale data from internal state
+func ttlCleanupHandler(c *gin.Context) {
+	updatedState := make(applicationState)
 	outdatedEntriesCount := 0
 	now := time.Now()
 	for k, v := range appState {
-		if now.Sub(v.ttl).Hours() < (24 * 5) {
+		// TODO: ttl limit could be parametrized, potential feature
+		if now.Sub(v.ttl).Seconds() < (24 * 5) {
 			updatedState[k] = v
 		} else {
 			outdatedEntriesCount++
@@ -94,7 +106,7 @@ func main() {
 	router := gin.Default()
 
 	router.GET("/:hash", redirectHandler)
-	router.GET("/internal/ttl", ttlCleanup)
+	router.GET("/internal/ttl", ttlCleanupHandler)
 	router.POST("/url", hashingHandler)
 
 	err := router.Run("localhost:8123")
